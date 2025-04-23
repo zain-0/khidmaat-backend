@@ -2,14 +2,20 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/zain-0/khidmaat-backend/config"
+	"github.com/zain-0/khidmaat-backend/models"
 	"github.com/zain-0/khidmaat-backend/utils"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // Endpoint to handle the request and send data to Lambda API
@@ -328,5 +334,136 @@ func FullECGProcessingHandler(c *gin.Context) {
 		"message":             "ECG signal processed and classified",
 		"r_peak_count":        len(rPeaks),
 		"classified_segments": results,
+	})
+}
+
+func AlertECGHandler(c *gin.Context) {
+	var requestBody struct {
+		UserID string    `json:"user_id"`
+		Signal []float64 `json:"signal"`
+	}
+
+	if err := c.ShouldBindJSON(&requestBody); err != nil || len(requestBody.Signal) == 0 || requestBody.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request, missing user_id or signal"})
+		return
+	}
+
+	// Fetch hospital_id from users collection
+	var user struct {
+		UserID     string `bson:"user_id"`
+		HospitalID string `bson:"hospital_id"`
+	}
+	if err := config.UsersCollection.FindOne(context.TODO(), bson.M{"user_id": requestBody.UserID}).Decode(&user); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Denoising
+	denoiseResp, err := utils.SendSignalToDenoiseAPI(requestBody.Signal)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to denoise signal"})
+		return
+	}
+
+	rawDenoised, ok := denoiseResp["denoised_signal"].([]interface{})
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid denoised signal format"})
+		return
+	}
+
+	denoised := make([]float64, len(rawDenoised))
+	for i, v := range rawDenoised {
+		f, ok := v.(float64)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid float conversion"})
+			return
+		}
+		denoised[i] = f
+	}
+
+	rPeaks := utils.DetectRPeaks(denoised)
+	var results []map[string]interface{}
+	classCount := make(map[string]int)
+	var heartBeats []float64
+
+	for _, r := range rPeaks {
+		start := r - 99
+		end := r + 200
+		if start >= 0 && end < len(denoised) {
+			segment := denoised[start:end]
+			payload, _ := json.Marshal(utils.PredictionRequest{Segment: segment})
+
+			resp, err := http.Post(
+				"https://niml49ck97.execute-api.us-east-1.amazonaws.com/khidmaat-function/predict",
+				"application/json",
+				bytes.NewBuffer(payload),
+			)
+			if err != nil {
+				continue
+			}
+			defer resp.Body.Close()
+
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				continue
+			}
+
+			var predictionRes utils.PredictionResponse
+			if err := json.Unmarshal(body, &predictionRes); err != nil {
+				continue
+			}
+
+			pred := predictionRes.Prediction[0]
+			maxIdx := 0
+			for i := 1; i < len(pred); i++ {
+				if pred[i] > pred[maxIdx] {
+					maxIdx = i
+				}
+			}
+
+			label := utils.ClassLabels[maxIdx]
+			classCount[label]++
+			heartBeats = append(heartBeats, pred[maxIdx]) // Use confidence as beat rep
+
+			results = append(results, map[string]interface{}{
+				"r_peak_index": r,
+				"class_label":  label,
+				"confidence":   pred[maxIdx],
+				"raw_probs":    pred,
+			})
+
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+
+	alert := false
+	if classCount["Premature ventr."]+classCount["Supraventricular prem"] >= 2 {
+		alert = true
+	}
+	if classCount["Normal"] < (len(rPeaks) - classCount["Normal"]) {
+		alert = true
+	}
+
+	// Store Medical Record
+	medicalRecord := models.MedicalRecord{
+		UserID:          requestBody.UserID,
+		MedicalID:       uuid.New().String(),
+		HeartBeats:      heartBeats,
+		Conclusion:      "Alert Needed: " + strconv.FormatBool(alert),
+		SentAt:          time.Now().Format(time.RFC3339),
+		HospitalTreated: &user.HospitalID,
+	}
+
+	_, err = config.MedicalRecordsCollection.InsertOne(context.TODO(), medicalRecord)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save medical record"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":             "Processed and stored medical record",
+		"r_peak_count":        len(rPeaks),
+		"classified_segments": results,
+		"alert_required":      alert,
 	})
 }
