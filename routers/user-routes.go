@@ -6,8 +6,11 @@ import (
 )
 
 func SetupUserRoutes(router *gin.Engine) {
-	router.POST("/signup", controllers.SignUp)
-	router.POST("/login", controllers.Login)
-	router.GET("/user/:id", controllers.GetUserWithDetails)
-	router.GET("/users", controllers.GetUsersByQuery)
+	userGroup := router.Group("/api/users")
+	{
+		userGroup.POST("/signup", controllers.SignUp)
+		userGroup.POST("/login", controllers.Login)
+		userGroup.GET("/:id", controllers.GetUserWithDetails)
+		userGroup.GET("/", controllers.GetUsersByQuery)
+	}
 }

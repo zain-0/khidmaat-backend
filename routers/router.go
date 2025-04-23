@@ -10,6 +10,7 @@ func SetupRouter() *gin.Engine {
 	// Setup individual route groups
 	SetupUserRoutes(router)
 	SetupECGRoutes(router)
+	SetupHospitalRoutes(router) // ⬅️ Add this line
 
 	return router
 }

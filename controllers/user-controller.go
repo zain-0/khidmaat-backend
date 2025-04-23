@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/zain-0/khidmaat-backend/config"
 	"github.com/zain-0/khidmaat-backend/models"
 	"go.mongodb.org/mongo-driver/bson"
@@ -15,7 +16,12 @@ import (
 func SignUp(c *gin.Context) {
 	var user models.User
 	if err := c.ShouldBindJSON(&user); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON input"})
+		return
+	}
+
+	if user.Username == "" || user.Password == "" || user.HospitalID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username, password, and hospital_id are required"})
 		return
 	}
 
@@ -26,6 +32,17 @@ func SignUp(c *gin.Context) {
 		return
 	}
 	user.Password = string(hashedPassword)
+	user.UserID = uuid.New().String() // Generate unique ID
+
+	// Validate if hospital exists
+	var hospital models.Hospital
+	if err := config.DB.Collection("hospitals").FindOne(c, bson.M{"hospital_id": user.HospitalID}).Decode(&hospital); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Hospital not found"})
+		return
+	}
+
+	// No need to attach the full hospital details to the user
+	// We just store the HospitalID in the User
 
 	// Create the user in the database
 	collection := config.DB.Collection("users")
@@ -84,10 +101,10 @@ func GetUserWithDetails(c *gin.Context) {
 		return
 	}
 
-	// Load related hospital and medical record
+	// Fetch related hospital
 	var hospital models.Hospital
 	hospitalCollection := config.DB.Collection("hospitals")
-	hospitalFilter := bson.D{{Key: "_id", Value: user.HospitalID}}
+	hospitalFilter := bson.D{{Key: "hospital_id", Value: user.HospitalID}} // Use HospitalID
 	err = hospitalCollection.FindOne(c, hospitalFilter).Decode(&hospital)
 	if err == mongo.ErrNoDocuments {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Hospital not found"})
@@ -97,9 +114,10 @@ func GetUserWithDetails(c *gin.Context) {
 		return
 	}
 
+	// Fetch related medical record
 	var medicalRecord models.MedicalRecord
 	medicalRecordCollection := config.DB.Collection("medical_records")
-	medicalRecordFilter := bson.D{{Key: "_id", Value: user.MedicalID}}
+	medicalRecordFilter := bson.D{{Key: "medical_id", Value: user.MedicalID}} // Use MedicalID
 	err = medicalRecordCollection.FindOne(c, medicalRecordFilter).Decode(&medicalRecord)
 	if err == mongo.ErrNoDocuments {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Medical record not found"})
@@ -110,7 +128,6 @@ func GetUserWithDetails(c *gin.Context) {
 	}
 
 	// Query the devices associated with the user
-
 	deviceCollection := config.DB.Collection("devices")
 	deviceFilter := bson.D{{Key: "user_id", Value: id}}
 	cursor, err := deviceCollection.Find(c, deviceFilter)
@@ -129,12 +146,13 @@ func GetUserWithDetails(c *gin.Context) {
 		devicePointers = append(devicePointers, &device)
 	}
 
-	// Assign to user struct
-	user.Hospital = &hospital
-	user.MedicalRecord = &medicalRecord
-	user.Devices = devicePointers
-
-	c.JSON(http.StatusOK, user)
+	// Return user along with related details (hospital, medical record, and devices)
+	c.JSON(http.StatusOK, gin.H{
+		"user":           user,
+		"hospital":       hospital,
+		"medical_record": medicalRecord,
+		"devices":        devicePointers,
+	})
 }
 
 // GetUsersByQuery function (unchanged)
