@@ -7,10 +7,6 @@ import (
 	"net/http"
 )
 
-type SignalRequest struct {
-	Signal []float64 `json:"signal"`
-}
-
 // Function to send the signal data to the Lambda API
 func SendSignalToDenoiseAPI(signalData []float64) (map[string]interface{}, error) {
 	url := "https://9zpm7oy3s2.execute-api.us-east-1.amazonaws.com/khidmaat-denoise"

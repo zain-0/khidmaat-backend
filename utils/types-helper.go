@@ -8,6 +8,10 @@ var ClassLabels = []string{
 	"Unclassifiable",
 }
 
+type SignalRequest struct {
+	Signal []float64 `json:"signal"`
+}
+
 type PredictionRequest struct {
 	Segment []float64 `json:"segment"`
 }
