@@ -11,4 +11,5 @@ func SetupECGRoutes(router *gin.Engine) {
 	router.POST("/segment-heartbeats", controllers.SegmentHeartbeatsHandler)
 	router.POST("/classify-heartbeats", controllers.ClassifyHeartbeatsHandler)
 	router.POST("/process-ecg", controllers.FullECGProcessingHandler)
+	router.POST("/alert-ecg", controllers.AlertECGHandler)
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -344,9 +345,11 @@ func AlertECGHandler(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&requestBody); err != nil || len(requestBody.Signal) == 0 || requestBody.UserID == "" {
+		log.Println("❌ Invalid request body:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request, missing user_id or signal"})
 		return
 	}
+	log.Printf("📥 Received ECG signal for user_id: %s, length: %d\n", requestBody.UserID, len(requestBody.Signal))
 
 	// Fetch hospital_id from users collection
 	var user struct {
@@ -354,19 +357,23 @@ func AlertECGHandler(c *gin.Context) {
 		HospitalID string `bson:"hospital_id"`
 	}
 	if err := config.UsersCollection.FindOne(context.TODO(), bson.M{"user_id": requestBody.UserID}).Decode(&user); err != nil {
+		log.Printf("❌ User not found for user_id: %s. Error: %v\n", requestBody.UserID, err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
+	log.Printf("🏥 Retrieved hospital_id: %s for user_id: %s\n", user.HospitalID, user.UserID)
 
 	// Denoising
 	denoiseResp, err := utils.SendSignalToDenoiseAPI(requestBody.Signal)
 	if err != nil {
+		log.Println("❌ Failed to denoise signal:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to denoise signal"})
 		return
 	}
 
 	rawDenoised, ok := denoiseResp["denoised_signal"].([]interface{})
 	if !ok {
+		log.Println("❌ Denoised signal format invalid")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid denoised signal format"})
 		return
 	}
@@ -375,18 +382,22 @@ func AlertECGHandler(c *gin.Context) {
 	for i, v := range rawDenoised {
 		f, ok := v.(float64)
 		if !ok {
+			log.Printf("❌ Failed to convert index %d to float\n", i)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid float conversion"})
 			return
 		}
 		denoised[i] = f
 	}
+	log.Println("✅ Denoising complete")
 
 	rPeaks := utils.DetectRPeaks(denoised)
+	log.Printf("📈 Detected %d R-peaks\n", len(rPeaks))
+
 	var results []map[string]interface{}
 	classCount := make(map[string]int)
 	var heartBeats []float64
 
-	for _, r := range rPeaks {
+	for i, r := range rPeaks {
 		start := r - 99
 		end := r + 200
 		if start >= 0 && end < len(denoised) {
@@ -399,17 +410,20 @@ func AlertECGHandler(c *gin.Context) {
 				bytes.NewBuffer(payload),
 			)
 			if err != nil {
+				log.Printf("❌ Request %d failed to predict: %v\n", i, err)
 				continue
 			}
 			defer resp.Body.Close()
 
 			body, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
+				log.Printf("❌ Failed to read prediction response at index %d: %v\n", i, err)
 				continue
 			}
 
 			var predictionRes utils.PredictionResponse
 			if err := json.Unmarshal(body, &predictionRes); err != nil {
+				log.Printf("❌ Failed to unmarshal prediction response at index %d: %v\n", i, err)
 				continue
 			}
 
@@ -423,7 +437,7 @@ func AlertECGHandler(c *gin.Context) {
 
 			label := utils.ClassLabels[maxIdx]
 			classCount[label]++
-			heartBeats = append(heartBeats, pred[maxIdx]) // Use confidence as beat rep
+			heartBeats = append(heartBeats, pred[maxIdx])
 
 			results = append(results, map[string]interface{}{
 				"r_peak_index": r,
@@ -443,6 +457,7 @@ func AlertECGHandler(c *gin.Context) {
 	if classCount["Normal"] < (len(rPeaks) - classCount["Normal"]) {
 		alert = true
 	}
+	log.Printf("🚨 Alert determination complete. Alert = %v\n", alert)
 
 	// Store Medical Record
 	medicalRecord := models.MedicalRecord{
@@ -454,11 +469,13 @@ func AlertECGHandler(c *gin.Context) {
 		HospitalTreated: &user.HospitalID,
 	}
 
-	_, err = config.MedicalRecordsCollection.InsertOne(context.TODO(), medicalRecord)
+	insertResult, err := config.MedicalRecordsCollection.InsertOne(context.TODO(), medicalRecord)
 	if err != nil {
+		log.Printf("❌ Failed to store medical record: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save medical record"})
 		return
 	}
+	log.Printf("✅ Medical record stored. ID: %v\n", insertResult.InsertedID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":             "Processed and stored medical record",
