@@ -51,7 +51,7 @@ func sendSignalToDenoiseAPI(signalData []float64) (map[string]interface{}, error
 }
 
 // Endpoint to handle the request and send data to Lambda API
-func ProcessSignalData(c *gin.Context) {
+func DenoiseData(c *gin.Context) {
 	// Declare a variable to hold the incoming request body
 	var requestBody SignalRequest
 

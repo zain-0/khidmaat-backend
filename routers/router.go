@@ -15,8 +15,9 @@ func SetupRouter() *gin.Engine {
 	router.GET("/users", controllers.GetUsersByQuery)
 
 	// Add the new route for processing signal data
-	router.POST("/denoise-signal", controllers.ProcessSignalData)
+	router.POST("/denoise-signal", controllers.DenoiseData)
 	router.POST("/detect-rpeaks", controllers.DetectRPeaksHandler)
+	router.POST("/segment-heartbeats", controllers.SegmentHeartbeatsHandler)
 
 	// Add other routes here
 
