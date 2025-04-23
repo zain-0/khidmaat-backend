@@ -27,16 +27,27 @@ func ConnectMongoDB() {
 		log.Fatal("MongoDB URI is not set in the .env file")
 	}
 
+	// MongoDB client options
 	clientOptions := options.Client().ApplyURI(mongoURI)
+
+	// Set a timeout for connection
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Create a new MongoDB client and connect to the database
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
-		log.Fatal("MongoDB Connection Error:", err)
+		log.Fatalf("MongoDB Connection Error: %v\n", err)
 	}
 
-	DB = client.Database("your_db_name") // Replace with your actual DB name
+	// Ensure that the connection is established
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		log.Fatalf("Failed to ping MongoDB: %v\n", err)
+	}
+
+	// Use your actual database name here
+	DB = client.Database("khidmaat")
 
 	// Initialize collections
 	UsersCollection = DB.Collection("users")

@@ -395,7 +395,7 @@ func AlertECGHandler(c *gin.Context) {
 
 	var results []map[string]interface{}
 	classCount := make(map[string]int)
-	var heartBeats []float64
+	var heartBeats []models.HeartBeat
 
 	for i, r := range rPeaks {
 		start := r - 99
@@ -437,7 +437,10 @@ func AlertECGHandler(c *gin.Context) {
 
 			label := utils.ClassLabels[maxIdx]
 			classCount[label]++
-			heartBeats = append(heartBeats, pred[maxIdx])
+			heartBeats = append(heartBeats, models.HeartBeat{
+				Label:      label,
+				Confidence: pred[maxIdx],
+			})
 
 			results = append(results, map[string]interface{}{
 				"r_peak_index": r,
@@ -461,12 +464,16 @@ func AlertECGHandler(c *gin.Context) {
 
 	// Store Medical Record
 	medicalRecord := models.MedicalRecord{
-		UserID:          requestBody.UserID,
-		MedicalID:       uuid.New().String(),
-		HeartBeats:      heartBeats,
-		Conclusion:      "Alert Needed: " + strconv.FormatBool(alert),
-		SentAt:          time.Now().Format(time.RFC3339),
-		HospitalTreated: &user.HospitalID,
+		UserID:     requestBody.UserID,
+		MedicalID:  uuid.New().String(),
+		HeartBeats: heartBeats,
+		Conclusion: "Alert Needed: " + strconv.FormatBool(alert),
+		SentAt:     time.Now().Format(time.RFC3339),
+	}
+
+	// Only set HospitalTreated if alert is true
+	if alert {
+		medicalRecord.HospitalTreated = &user.HospitalID
 	}
 
 	insertResult, err := config.MedicalRecordsCollection.InsertOne(context.TODO(), medicalRecord)

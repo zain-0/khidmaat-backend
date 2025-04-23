@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -19,8 +20,12 @@ func CreateHospital(c *gin.Context) {
 	}
 
 	hospital.HospitalID = uuid.New().String()
+
+	fmt.Println("Hospital data:", hospital)
+
 	_, err := config.DB.Collection("hospitals").InsertOne(context.TODO(), hospital)
 	if err != nil {
+		fmt.Println("Error creating hospital:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create hospital"})
 		return
 	}
