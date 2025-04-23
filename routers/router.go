@@ -19,6 +19,7 @@ func SetupRouter() *gin.Engine {
 	router.POST("/detect-rpeaks", controllers.DetectRPeaksHandler)
 	router.POST("/segment-heartbeats", controllers.SegmentHeartbeatsHandler)
 	router.POST("/classify-heartbeats", controllers.ClassifyHeartbeatsHandler)
+	router.POST("/process-ecg", controllers.FullECGProcessingHandler)
 
 	// Add other routes here
 
